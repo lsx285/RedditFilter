@@ -1,5 +1,4 @@
 name: CI
-
 on:
   workflow_dispatch:
     inputs:
@@ -7,13 +6,11 @@ on:
         description: "Direct URL to Decrypted IPA file"
         type: string
         required: true
-
   push:
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,39 +19,29 @@ jobs:
       - name: Get package info
         id: package_info
         run: |
-          version=$(cat Makefile | grep "PACKAGE_VERSION =" | cut -d' ' -f3)
-          if [ -z $version ]; then
-            version=$(cat control | grep "Version:" | cut -d' ' -f2)
-          fi
-          echo "id=$(cat control | grep "Package:" | cut -d' ' -f2)" >> $GITHUB_OUTPUT
+          version=$(grep "PACKAGE_VERSION =" Makefile | cut -d' ' -f3 || grep "Version:" control | cut -d' ' -f2)
+          echo "id=$(grep "Package:" control | cut -d' ' -f2)" >> $GITHUB_OUTPUT
           echo "version=$version" >> $GITHUB_OUTPUT
-      
+
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y rsync
-
-      - name: Install theos-jailed dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y build-essential checkinstall git autoconf automake libtool-bin llvm xmlstarlet
-          curl -L https://github.com/libimobiledevice/libplist/releases/download/2.6.0/libplist-2.6.0.tar.bz2 | bzip2 -d | tar -x
+          sudo apt install -y rsync build-essential checkinstall git autoconf automake libtool-bin llvm xmlstarlet
+          curl -sL https://github.com/libimobiledevice/libplist/releases/download/2.6.0/libplist-2.6.0.tar.bz2 | tar -xj
           cd libplist*
-          ./configure
-          sudo make install
-          sudo ldconfig
+          ./configure && sudo make install && sudo ldconfig
 
-      - name: Download IPA
+      - name: Download and validate IPA
         run: |
-          curl -Lo "${{ github.workspace }}/App.ipa" "${{ inputs.ipa_url }}"
-          zip -T "${{ github.workspace }}/App.ipa"
+          curl -sLo App.ipa "${{ inputs.ipa_url }}"
+          zip -T App.ipa
 
       - name: Get IPA Info
         id: ipa_info
         run: |
-          info=$(unzip -p "${{ github.workspace }}/App.ipa" Payload/*.app/Info.plist)
-          echo "bundle-id=$(echo $info | xmlstarlet sel -t -v "/plist/dict/key[text()=\"CFBundleIdentifier\"]/following-sibling::*[1]/text()")" >> $GITHUB_OUTPUT
-          echo "version=$(echo $info | xmlstarlet sel -t -v "/plist/dict/key[text()=\"CFBundleShortVersionString\"]/following-sibling::*[1]/text()")" >> $GITHUB_OUTPUT
+          info=$(unzip -p App.ipa Payload/*.app/Info.plist)
+          echo "bundle-id=$(echo "$info" | xmlstarlet sel -t -v "/plist/dict/key[text()='CFBundleIdentifier']/following-sibling::*[1]/text()")" >> $GITHUB_OUTPUT
+          echo "version=$(echo "$info" | xmlstarlet sel -t -v "/plist/dict/key[text()='CFBundleShortVersionString']/following-sibling::*[1]/text()")" >> $GITHUB_OUTPUT
 
       - name: Setup theos
         uses: level3tjg/theos-action@main
@@ -63,7 +50,7 @@ jobs:
           cache-dir-theos: ${{ github.workspace }}/theos
           cache-dir-sdks: ${{ github.workspace }}/theos/sdks
 
-      - name: Checkout theos-jailed
+      - name: Setup theos-jailed
         uses: actions/checkout@v4
         with:
           repository: level3tjg/theos-jailed
@@ -71,27 +58,18 @@ jobs:
           submodules: recursive
 
       - name: Install theos-jailed
+        run: ./theos-jailed/install
+
+      - name: Build packages
         run: |
-          ./theos-jailed/install
-
-      - name: Build rootless deb
-        run: make package
-        env:
-          FINALPACKAGE: 1
-          THEOS_PACKAGE_SCHEME: rootless
-
-      - name: Build rootful deb
-        run: make clean package
-        env:
-          FINALPACKAGE: 1
-
-      - name: Build IPA
-        run: make package
-        env:
-          FINALPACKAGE: 1
-          SIDELOADED: 1
-          IPA: ${{ github.workspace }}/App.ipa
-          APP_VERSION: ${{ steps.ipa_info.outputs.version }}
+          # Build rootless deb
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          
+          # Build rootful deb
+          make clean package FINALPACKAGE=1
+          
+          # Build IPA
+          make package FINALPACKAGE=1 SIDELOADED=1 IPA=App.ipa APP_VERSION=${{ steps.ipa_info.outputs.version }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
