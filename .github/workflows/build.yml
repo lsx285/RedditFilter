@@ -8,49 +8,41 @@ on:
         type: string
         required: true
 
+  push:
+
 jobs:
-  setup:
+  build:
     runs-on: ubuntu-22.04
-    outputs:
-      ipa_version: ${{ steps.ipa_info.outputs.version }}
+
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
+      - name: Get package info
+        id: package_info
+        run: |
+          version=$(cat Makefile | grep "PACKAGE_VERSION =" | cut -d' ' -f3)
+          if [ -z $version ]; then
+            version=$(cat control | grep "Version:" | cut -d' ' -f2)
+          fi
+          echo "id=$(cat control | grep "Package:" | cut -d' ' -f2)" >> $GITHUB_OUTPUT
+          echo "version=$version" >> $GITHUB_OUTPUT
+      
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y \
-            rsync \
-            build-essential \
-            checkinstall \
-            git \
-            autoconf \
-            automake \
-            libtool-bin \
-            llvm \
-            xmlstarlet \
-            unzip \
-            curl
+          sudo apt install -y rsync
 
-      - name: Cache libplist
-        uses: actions/cache@v4
-        id: cache-libplist
-        with:
-          path: ~/libplist-install
-          key: libplist-2.6.0
-
-      - name: Build libplist
-        if: steps.cache-libplist.outputs.cache-hit != 'true'
+      - name: Install theos-jailed dependencies
         run: |
+          sudo apt update
+          sudo apt install -y build-essential checkinstall git autoconf automake libtool-bin llvm xmlstarlet
           curl -L https://github.com/libimobiledevice/libplist/releases/download/2.6.0/libplist-2.6.0.tar.bz2 | bzip2 -d | tar -x
-          cd libplist-2.6.0
-          ./configure --prefix=$HOME/libplist-install
-          make && make install
-
-      - name: Set libplist env
-        run: echo "$HOME/libplist-install/lib" | sudo tee /etc/ld.so.conf.d/libplist.conf && sudo ldconfig
+          cd libplist*
+          ./configure
+          sudo make install
+          sudo ldconfig
 
       - name: Download IPA
         run: |
@@ -61,7 +53,8 @@ jobs:
         id: ipa_info
         run: |
           info=$(unzip -p "${{ github.workspace }}/App.ipa" Payload/*.app/Info.plist)
-          echo "version=$(echo "$info" | xmlstarlet sel -t -v "/plist/dict/key[text()='CFBundleShortVersionString']/following-sibling::*[1]")" >> $GITHUB_OUTPUT
+          echo "bundle-id=$(echo $info | xmlstarlet sel -t -v "/plist/dict/key[text()=\"CFBundleIdentifier\"]/following-sibling::*[1]/text()")" >> $GITHUB_OUTPUT
+          echo "version=$(echo $info | xmlstarlet sel -t -v "/plist/dict/key[text()=\"CFBundleShortVersionString\"]/following-sibling::*[1]/text()")" >> $GITHUB_OUTPUT
 
       - name: Setup theos
         uses: level3tjg/theos-action@main
@@ -77,19 +70,20 @@ jobs:
           path: theos-jailed
           submodules: recursive
 
-      - name: Patch install script to remove plistutil
-        run: sed -i '/plistutil/d' theos-jailed/install
-
       - name: Install theos-jailed
-        run: ./theos-jailed/install
+        run: |
+          ./theos-jailed/install
 
-  build-ipa:
-    needs: setup
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      - name: Build rootless deb
+        run: make package
+        env:
+          FINALPACKAGE: 1
+          THEOS_PACKAGE_SCHEME: rootless
+
+      - name: Build rootful deb
+        run: make clean package
+        env:
+          FINALPACKAGE: 1
 
       - name: Build IPA
         run: make package
@@ -97,10 +91,17 @@ jobs:
           FINALPACKAGE: 1
           SIDELOADED: 1
           IPA: ${{ github.workspace }}/App.ipa
-          APP_VERSION: ${{ needs.setup.outputs.ipa_version }}
+          APP_VERSION: ${{ steps.ipa_info.outputs.version }}
 
-      - name: Upload IPA
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: App_${{ needs.setup.outputs.ipa_version }}.ipa
-          path: packages/*.ipa
+          name: ${{ steps.package_info.outputs.id }}_${{ steps.package_info.outputs.version }}
+          path: packages/*
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: packages/*
+          tag_name: v${{ steps.ipa_info.outputs.version }}-${{ steps.package_info.outputs.version }}
