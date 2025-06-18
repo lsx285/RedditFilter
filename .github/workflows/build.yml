@@ -21,7 +21,18 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y rsync build-essential checkinstall git autoconf automake libtool-bin llvm xmlstarlet unzip curl
+          sudo apt install -y \
+            rsync \
+            build-essential \
+            checkinstall \
+            git \
+            autoconf \
+            automake \
+            libtool-bin \
+            llvm \
+            xmlstarlet \
+            unzip \
+            curl
 
       - name: Cache libplist
         uses: actions/cache@v4
@@ -50,7 +61,7 @@ jobs:
         id: ipa_info
         run: |
           info=$(unzip -p "${{ github.workspace }}/App.ipa" Payload/*.app/Info.plist)
-          echo "version=$(echo $info | xmlstarlet sel -t -v "/plist/dict/key[text()='CFBundleShortVersionString']/following-sibling::*[1]/text()")" >> $GITHUB_OUTPUT
+          echo "version=$(echo "$info" | xmlstarlet sel -t -v "/plist/dict/key[text()='CFBundleShortVersionString']/following-sibling::*[1]")" >> $GITHUB_OUTPUT
 
       - name: Setup theos
         uses: level3tjg/theos-action@main
@@ -65,6 +76,9 @@ jobs:
           repository: level3tjg/theos-jailed
           path: theos-jailed
           submodules: recursive
+
+      - name: Patch install script to remove plistutil
+        run: sed -i '/plistutil/d' theos-jailed/install
 
       - name: Install theos-jailed
         run: ./theos-jailed/install
