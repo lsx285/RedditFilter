@@ -71,15 +71,9 @@ jobs:
           # Build IPA
           make package FINALPACKAGE=1 SIDELOADED=1 IPA=App.ipa APP_VERSION=${{ steps.ipa_info.outputs.version }}
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.package_info.outputs.id }}_${{ steps.package_info.outputs.version }}
-          path: packages/*
-
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: packages/*
+          files: packages/*.ipa
           tag_name: v${{ steps.ipa_info.outputs.version }}-${{ steps.package_info.outputs.version }}
