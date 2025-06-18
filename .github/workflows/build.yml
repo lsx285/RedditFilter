@@ -4,10 +4,6 @@ on:
   push:
   workflow_dispatch:
     inputs:
-      create_release:
-        description: "Build IPA and create draft release"
-        default: false
-        type: boolean
       ipa_url:
         description: "Direct URL to Decrypted IPA file"
         type: string
@@ -31,7 +27,7 @@ jobs:
           fi
           echo "id=$(cat control | grep "Package:" | cut -d' ' -f2)" >> $GITHUB_OUTPUT
           echo "version=$version" >> $GITHUB_OUTPUT
-
+      
       - name: Install dependencies
         run: |
           sudo apt update
